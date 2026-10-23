@@ -2,14 +2,14 @@ import math
 
 import pytest
 
-from schwarzschild_horizon.physics import C, G, HBAR, KB, M_SUN, horizon_state
+from schwarzschild_horizon.physics import M_SUN, horizon_state
 
 
 def test_one_solar_mass_reference_scales():
     state = horizon_state(M_SUN)
     assert state.radius_m == pytest.approx(2953.33938206688, rel=1e-12)
-    assert state.surface_gravity_m_s2 == pytest.approx(1.525e13, rel=1e-12)
-    assert state.hawking_temperature_K == pytest.approx(6.170e-8, rel=1e-6)
+    assert state.surface_gravity_m_s2 == pytest.approx(1.5215914300168049e13, rel=1e-12)
+    assert state.hawking_temperature_K == pytest.approx(6.170073824811396e-8, rel=1e-12)
 
 
 def test_scaling_laws():
