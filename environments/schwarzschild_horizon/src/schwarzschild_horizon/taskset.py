@@ -12,6 +12,9 @@ import verifiers.v1 as vf
 from .physics import M_SUN, horizon_state, relative_error
 
 
+FIELDS = ("radius_m", "surface_gravity_m_s2", "hawking_temperature_K")
+
+
 class HorizonData(vf.TaskData):
     """Immutable task row with a hidden reference answer."""
 
@@ -24,35 +27,30 @@ class HorizonData(vf.TaskData):
 class HorizonTask(vf.Task[HorizonData]):
     """Score a model's numerical answer against an independent physics oracle."""
 
-    @vf.reward(weight=0.75)
+    @vf.reward
     async def numerical_correctness(self, trace: vf.Trace) -> float:
         answer = self._parse_answer(trace.last_reply)
         if answer is None:
             return 0.0
-
-        ref = self.data.reference
         scores = []
-        for key in ("radius_m", "surface_gravity_m_s2", "hawking_temperature_K"):
-            if key not in answer:
+        for key in FIELDS:
+            if key not in answer or not math.isfinite(answer[key]):
                 scores.append(0.0)
                 continue
-            error = relative_error(answer[key], ref[key])
-            scores.append(max(0.0, 1.0 - min(1.0, error / 1e-5)))
+            scores.append(float(relative_error(answer[key], self.data.reference[key]) <= 1e-5))
         return sum(scores) / len(scores)
 
     @vf.metric
     async def parse_success(self, trace: vf.Trace) -> float:
         return float(self._parse_answer(trace.last_reply) is not None)
 
-    @vf.reward(weight=0.25)
-    async def consistency_check(self, trace: vf.Trace) -> float:
-        """Binary signal that all three reported values meet the reference tolerance."""
+    @vf.metric
+    async def relative_error_mean(self, trace: vf.Trace) -> float:
         answer = self._parse_answer(trace.last_reply)
         if answer is None:
-            return 0.0
-        ref = self.data.reference
-        errors = [relative_error(answer.get(k, math.nan), ref[k]) for k in ref]
-        return float(all(error <= 1e-5 for error in errors))
+            return math.inf
+        errors = [relative_error(answer.get(key, math.nan), self.data.reference[key]) for key in FIELDS]
+        return sum(errors) / len(errors)
 
     @staticmethod
     def _parse_answer(text: str | None) -> dict[str, float] | None:
@@ -63,9 +61,12 @@ class HorizonTask(vf.Task[HorizonData]):
             obj = json.loads(candidate)
             if not isinstance(obj, dict):
                 return None
-            allowed = {"radius_m", "surface_gravity_m_s2", "hawking_temperature_K"}
-            return {key: float(value) for key, value in obj.items() if key in allowed}
-        except (ValueError, TypeError):
+            values = {}
+            for key in FIELDS:
+                if key in obj:
+                    values[key] = float(obj[key])
+            return values or None
+        except (ValueError, TypeError, json.JSONDecodeError):
             values: dict[str, float] = {}
             patterns = {
                 "radius_m": r"radius_m\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)",
@@ -85,7 +86,7 @@ class SchwarzschildHorizonTaskset(vf.Taskset[HorizonTask, vf.TasksetConfig]):
     def load(self) -> list[HorizonTask]:
         rng = random.Random(20261023)
         tasks: list[HorizonTask] = []
-        modes = ["solar_mass", "kilogram", "geometric_units"]
+        modes = ("solar_mass", "kilogram", "geometric_units")
 
         for i in range(100):
             mode = modes[i % len(modes)]
@@ -98,9 +99,7 @@ class SchwarzschildHorizonTaskset(vf.Taskset[HorizonTask, vf.TasksetConfig]):
             elif mode == "kilogram":
                 mass_text = f"{mass_kg:.12e} kg"
             else:
-                mass_text = (
-                    f"{mass_solar:.12e} solar masses; use geometric units only for the intermediate conversion"
-                )
+                mass_text = f"{mass_solar:.12e} solar masses; use G=c=1 only for the intermediate conversion"
 
             prompt = (
                 "You are solving a deterministic scientific verification task.\n"
